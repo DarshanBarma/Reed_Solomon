@@ -1,192 +1,172 @@
-from reedsolo import RSCodec, ReedSolomonError
-import random
+"""
+Reed-Solomon Error Correction Demo (QR-Style, Text Only)
+
+This is the main entry point for the Reed-Solomon error correction demonstration.
+The code is organized into separate modules for better maintainability:
+- config.py: Configuration constants and error correction levels
+- reed_solomon_codec.py: Encoding and decoding logic
+- corruption.py: Corruption simulation (XOR and AWGN)
+- ui_utils.py: Display and animation utilities
+"""
+
+from config import ERROR_CORRECTION_LEVELS, CORRUPTION_MODE_XOR, CORRUPTION_MODE_AWGN
+from reed_solomon_codec import ReedSolomonEncoder
+from corruption import apply_corruption, print_corruption_changes
+from ui_utils import (
+    animate, print_header, print_section, print_ec_levels,
+    print_encoding_info, print_corruption_info, print_decoding_concept,
+    print_summary
+)
 
 
-def main():
-    print("=" * 70)
-    print("Reed-Solomon Error Correction Demo (QR-Style, Text Only)")
-    print("=" * 70)
-    print()
+def get_user_message() -> str:
+    """Get the message from the user."""
+    return input("Enter a message to protect with error correction: ")
 
-    # ========================================================================
-    # STEP 1: Get the message from the user
-    # ========================================================================
-    message = input("Enter a message to protect with error correction: ")
-    print()
 
-    # ========================================================================
-    # STEP 2: Choose error correction level (QR-style: L, M, Q, H)
-    # ========================================================================
-    print("QR-style error correction levels (simplified for this demo):")
-    print("  L (Low)      →  8 parity bytes  (can correct up to 4 byte errors)")
-    print("  M (Medium)   → 16 parity bytes  (can correct up to 8 byte errors)")
-    print("  Q (Quartile) → 24 parity bytes  (can correct up to 12 byte errors)")
-    print("  H (High)     → 32 parity bytes  (can correct up to 16 byte errors)")
-    print()
-
-    ec_map = {
-        'L': 8,
-        'M': 16,
-        'Q': 24,
-        'H': 32
-    }
-
+def get_error_correction_level() -> tuple[str, int]:
+    """
+    Prompt user to choose error correction level.
+    
+    Returns:
+        Tuple of (level_name, n_parity_bytes)
+    """
+    print_ec_levels()
+    
     while True:
         ec_level = input("Choose error correction level (L, M, Q, H): ").strip().upper()
-        if ec_level in ec_map:
-            break
+        if ec_level in ERROR_CORRECTION_LEVELS:
+            return ec_level, ERROR_CORRECTION_LEVELS[ec_level]
         print("Invalid choice. Please enter L, M, Q, or H.")
 
-    n_parity = ec_map[ec_level]
-    print()
 
-    # ========================================================================
-    # STEP 3: Convert message to bytes
-    # ========================================================================
-    print("-" * 70)
-    print("STEP 1: Converting message to bytes")
-    print("-" * 70)
-
-    message_bytes = message.encode("utf-8")
-
-    print(f"Original message: '{message}'")
-    print(f"Message bytes ({len(message_bytes)} data bytes):")
-    print(f"  {list(message_bytes)}")
-    print()
-
-    # ========================================================================
-    # STEP 4: Encode with Reed-Solomon (add parity bytes)
-    # ========================================================================
-    print("-" * 70)
-    print("STEP 2: Adding Reed-Solomon error correction")
-    print("-" * 70)
-
-    rs = RSCodec(n_parity)
-    encoded_bytes = rs.encode(message_bytes)
-
-    max_correctable = n_parity // 2
-
-    print(f"Chosen EC level: {ec_level}")
-    print(f"Parity bytes added (error correction code): {n_parity}")
-    print(f"Maximum correctable byte errors (t = n_parity/2): {max_correctable}")
-    print()
-
-    print("Full codeword (data bytes + parity bytes):")
-    print(f"  {list(encoded_bytes)}")
-    print(f"Total length: {len(encoded_bytes)} bytes")
-    print()
-
-    # Show which part is data and which part is parity (the 'error code')
-    data_len = len(message_bytes)
-    data_part = list(encoded_bytes[:data_len])
-    parity_part = list(encoded_bytes[data_len:])
-
-    print("Data part (original message bytes):")
-    print(f"  indices 0 .. {data_len - 1}")
-    print(f"  {data_part}")
-    print()
-
-    print("Error correction code (ECC bytes / parity bytes):")
-    print(f"  indices {data_len} .. {len(encoded_bytes) - 1}")
-    print(f"  Raw ECC bytes: {parity_part}")
-    print("  ECC bytes one by one:")
-    for i, b in enumerate(parity_part):
-        print(f"    ECC[{i}] at codeword position {data_len + i}: {b}")
-    print()
-
-    print("CONCEPTUAL VIEW OF ENCODING:")
-    print("  • Treat the message bytes as coefficients of a polynomial M(x).")
-    print("  • Reed–Solomon constructs a generator polynomial G(x).")
-    print("  • It computes parity bytes as the remainder when M(x) * x^n_parity")
-    print("    is divided by G(x).")
-    print("  • Those remainder bytes are the ECC (the parity bytes you see above).")
-    print()
-
-    # ========================================================================
-    # STEP 5: Simulate corruption (errors)
-    # ========================================================================
-    print("-" * 70)
-    print("STEP 3: Simulating transmission errors (corruption)")
-    print("-" * 70)
-    print(f"Note: With {n_parity} parity bytes, we can correct up to {max_correctable} byte errors.")
+def get_corruption_parameters(max_bytes: int, max_correctable: int) -> tuple[int, str, float]:
+    """
+    Get corruption parameters from user.
+    
+    Args:
+        max_bytes: Maximum number of bytes that can be corrupted
+        max_correctable: Maximum number of correctable bytes
+        
+    Returns:
+        Tuple of (n_errors, mode, noise_sigma)
+    """
+    print(f"Note: With {max_correctable * 2} parity bytes, we can correct up to {max_correctable} byte errors.")
     print("If you corrupt more than this, decoding will probably fail.")
     print()
-
+    
+    # Get number of errors
     while True:
         try:
             n_errors = int(input("How many codeword bytes should we corrupt? "))
-            if 0 <= n_errors <= len(encoded_bytes):
+            if 0 <= n_errors <= max_bytes:
                 break
-            print(f"Please enter a number between 0 and {len(encoded_bytes)}.")
+            print(f"Please enter a number between 0 and {max_bytes}.")
         except ValueError:
             print("Please enter a valid integer.")
+    
+    print()
+    print("Choose corruption model:")
+    print("  1 → Random byte flips (XOR)  [discrete, like random bit errors]")
+    print("  2 → AWGN-like noise          [add Gaussian noise to byte values]")
+    
+    # Get corruption mode
+    while True:
+        mode = input("Enter 1 or 2: ").strip()
+        if mode in (CORRUPTION_MODE_XOR, CORRUPTION_MODE_AWGN):
+            break
+        print("Please enter 1 or 2.")
+    
+    # Get noise sigma if AWGN mode
+    noise_sigma = None
+    if mode == CORRUPTION_MODE_AWGN:
+        while True:
+            try:
+                noise_sigma = float(input("Enter noise standard deviation (e.g. 5, 10, 20): "))
+                if noise_sigma >= 0:
+                    break
+                print("Please enter a non-negative value.")
+            except ValueError:
+                print("Please enter a valid number.")
+    
+    return n_errors, mode, noise_sigma
 
-    corrupted_bytes = bytearray(encoded_bytes)
 
+def main():
+    """Main function orchestrating the Reed-Solomon demo."""
+    print_header("Reed-Solomon Error Correction Demo (QR-Style, Text Only)")
+    
+    # ========================================================================
+    # STEP 1: Get the message from the user
+    # ========================================================================
+    message = get_user_message()
+    print()
+    
+    # ========================================================================
+    # STEP 2: Choose error correction level (QR-style: L, M, Q, H)
+    # ========================================================================
+    ec_level, n_parity = get_error_correction_level()
+    print()
+    
+    # ========================================================================
+    # STEP 3: Encode with Reed-Solomon
+    # ========================================================================
+    print_section("STEP 1: Converting message to bytes")
+    
+    encoder = ReedSolomonEncoder(n_parity)
+    message_bytes, encoded_bytes = encoder.encode(message)
+    
+    print_encoding_info(message, message_bytes, encoded_bytes, ec_level, n_parity)
+    
+    # ========================================================================
+    # STEP 4: Add encoding animation and display
+    # ========================================================================
+    print_section("STEP 2: Adding Reed-Solomon error correction")
+    
+    animate("Building Reed–Solomon encoder")
+    animate("Generating parity bytes")
+    print()
+    
+    # ========================================================================
+    # STEP 5: Simulate corruption (errors)
+    # ========================================================================
+    print_section("STEP 3: Simulating transmission errors (corruption)")
+    
+    max_correctable = encoder.get_max_correctable()
+    n_errors, mode, noise_sigma = get_corruption_parameters(
+        len(encoded_bytes), max_correctable
+    )
+    
+    print()
+    corrupted_bytes, corruption_positions, changes = apply_corruption(
+        encoded_bytes, n_errors, mode, noise_sigma
+    )
+    
     if n_errors > 0:
-        # Choose random distinct positions to corrupt
-        corruption_positions = random.sample(range(len(corrupted_bytes)), n_errors)
-        corruption_positions.sort()
-
-        print()
         print(f"Corrupting {n_errors} byte(s) at positions: {corruption_positions}")
-        print("Byte changes (original → corrupted):")
-
-        for pos in corruption_positions:
-            original_value = corrupted_bytes[pos]
-            xor_val = random.randint(1, 255)  # non-zero to guarantee change
-            corrupted_bytes[pos] ^= xor_val
-            new_value = corrupted_bytes[pos]
-            print(f"  position {pos:3d}: {original_value:3d}  XOR {xor_val:3d}  →  {new_value:3d}")
-
-        print()
-        print("Original codeword:")
-        print(f"  {list(encoded_bytes)}")
-        print("Corrupted codeword:")
-        print(f"  {list(corrupted_bytes)}")
-        print()
-    else:
-        print("No corruption applied. The codeword is transmitted perfectly.")
-        print()
-        corruption_positions = []
-
+        print_corruption_changes(changes, mode, noise_sigma)
+    
+    print_corruption_info(encoded_bytes, corrupted_bytes, corruption_positions, mode, noise_sigma)
+    
     # ========================================================================
     # STEP 6: Attempt to decode and correct errors
     # ========================================================================
-    print("-" * 70)
-    print("STEP 4: Decoding with Reed-Solomon error correction")
-    print("-" * 70)
-
-    print("CONCEPTUAL VIEW OF DECODING (what Reed–Solomon does internally):")
-    print("  1) Compute 'syndromes' from the received codeword.")
-    print("     • If all syndromes are zero → no errors.")
-    print("     • If some are non-zero → errors are present.")
-    print("  2) From the syndromes, build the error locator polynomial Λ(x).")
-    print("     • The roots of Λ(x) give the positions of the errors.")
-    print("  3) Build the error evaluator polynomial Ω(x).")
-    print("     • This tells how big each error is at those positions.")
-    print("  4) Correct the codeword by subtracting the error values.")
-    print("  5) Recover the original data bytes from the corrected codeword.")
-    print("Note: The 'reedsolo' library does all this math internally for us.")
-    print()
-
-    try:
-        decoded_result = rs.decode(bytes(corrupted_bytes))
-
-        # Handle both possible return types (tuple or bytes)
-        if isinstance(decoded_result, tuple):
-            decoded_bytes = decoded_result[0]
-        else:
-            decoded_bytes = decoded_result
-
-        decoded_message = decoded_bytes.decode("utf-8")
-
+    print_section("STEP 4: Decoding with Reed-Solomon error correction")
+    
+    print_decoding_concept()
+    
+    animate("Computing syndromes")
+    animate("Locating and correcting errors")
+    
+    success, decoded_message, decoded_bytes = encoder.decode(corrupted_bytes)
+    
+    if success:
         # Count how many bytes were actually different from the original codeword
         introduced_errors = [
             i for i in range(len(encoded_bytes)) if encoded_bytes[i] != corrupted_bytes[i]
         ]
         num_introduced_errors = len(introduced_errors)
-
+        
         print("✓ Decoding successful!")
         print()
         print(f"Bytes that were corrupted (positions): {corruption_positions}")
@@ -194,15 +174,12 @@ def main():
         print()
         print(f"Decoded message: '{decoded_message}'")
         print()
-
+        
         if decoded_message == message:
             print("✓ Perfect match! Reed-Solomon successfully corrected all errors within its capability.")
         else:
             print("⚠ Decoded message differs from original (unexpected in normal RS behaviour).")
-
-        success = True
-
-    except ReedSolomonError:
+    else:
         print("✗ Decoding failed!")
         print()
         print(f"Too many errors for error correction level {ec_level}.")
@@ -210,22 +187,11 @@ def main():
         print("Try again with:")
         print(f"  - Fewer corrupted bytes (≤ {max_correctable}), OR")
         print("  - A higher error correction level (M, Q, or H)")
-        success = False
-
+    
     # ========================================================================
     # STEP 7: Summary
     # ========================================================================
-    print()
-    print("=" * 70)
-    print("SUMMARY")
-    print("=" * 70)
-    print(f"Original message:          '{message}'")
-    print(f"Chosen EC level:           {ec_level} ({n_parity} parity bytes)")
-    print(f"Maximum correctable bytes: {max_correctable}")
-    print(f"Bytes requested to corrupt:{n_errors}")
-    print(f"Decoding result:           {'SUCCESS' if success else 'FAILED'}")
-    if success:
-        print(f"Final decoded message:     '{decoded_message}'")
+    print_summary(message, ec_level, n_parity, n_errors, mode, noise_sigma, success, decoded_message)
 
 
 if __name__ == "__main__":
